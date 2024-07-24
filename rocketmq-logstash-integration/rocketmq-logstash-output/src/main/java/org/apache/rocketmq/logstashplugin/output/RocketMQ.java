@@ -41,6 +41,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.BiConsumer;
+import java.util.Map;
 
 import static org.apache.rocketmq.client.impl.CommunicationMode.ASYNC;
 import static org.apache.rocketmq.client.impl.CommunicationMode.ONEWAY;
@@ -60,6 +61,12 @@ public class RocketMQ implements Output {
     public static final PluginConfigSpec<String> CONFIG_TAG =
             PluginConfigSpec.stringSetting("tag", "");
 
+    public static final PluginConfigSpec<String> CONFIG_KEY =
+            PluginConfigSpec.stringSetting("key", "");
+
+    public static final PluginConfigSpec<Map<String, Object>> CONFIG_PROPERTIES =
+            PluginConfigSpec.hashSetting("properties");
+
     public static final String MODE_ONEWAY = ONEWAY.name();
     private static final String MODE_SYNC = SYNC.name();
     private static final String MODE_ASYNC = ASYNC.name();
@@ -78,6 +85,8 @@ public class RocketMQ implements Output {
     private final String namesrvAddr;
     private final String topic;
     private final String tag;
+    private final String key;
+    private final Map<String, Object> properties;
     private final Long batchSize;
     private final Long sendTimeoutMillis;
     private final Long retries;
@@ -94,6 +103,8 @@ public class RocketMQ implements Output {
         this.namesrvAddr = configuration.get(CONFIG_NAMESRV_ADDR);
         this.topic = configuration.get(CONFIG_TOPIC);
         this.tag = configuration.get(CONFIG_TAG);
+        this.key = configuration.get(CONFIG_KEY);
+        this.properties = configuration.get(CONFIG_PROPERTIES);
         this.batchSize = configuration.get(CONFIG_BATCH_SIZE);
         this.sendTimeoutMillis = configuration.get(CONFIG_TIMEOUT);
         this.retries = configuration.get(CONFIG_RETRY_TIMES);
@@ -188,7 +199,8 @@ public class RocketMQ implements Output {
         return PluginHelper.commonOutputSettings(
                 Arrays.asList(CONFIG_BATCH_SIZE, CONFIG_GROUP, CONFIG_TAG, CONFIG_TOPIC, CONFIG_TIMEOUT,
                         CONFIG_NAMESRV_ADDR, CONFIG_RETRY_TIMES,
-                        CONFIG_SEND_MODE, CONFIG_CODEC));
+                        CONFIG_SEND_MODE, CONFIG_CODEC,
+                        CONFIG_KEY, CONFIG_PROPERTIES));
     }
 
     @Override
@@ -215,7 +227,25 @@ public class RocketMQ implements Output {
                 continue;
             }
 
-            final Message message = new Message(this.topic, this.tag, eventBytes);
+            final Message message;
+            try {
+                String topic = event.sprintf(this.topic);
+                String tag = event.sprintf(this.tag);
+                String key = event.sprintf(this.key);
+                message = new Message(topic, tag, key, eventBytes);
+                if (properties != null) {
+                    for (Map.Entry<String, Object> entry : properties.entrySet()) {
+                        if (entry.getKey() == null || entry.getValue() == null) {
+                            continue;
+                        }
+                        message.putUserProperty(event.sprintf(entry.getKey()), event.sprintf(entry.getValue().toString()));
+                    }
+                }
+            } catch (IOException e) {
+                logger.error("Build message failed", e);
+                continue;
+            }
+
             eventSender.accept(event, message);
         }
     }
